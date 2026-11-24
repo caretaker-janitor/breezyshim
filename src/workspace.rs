@@ -100,9 +100,7 @@ pub fn check_clean_tree(
         let check_clean_tree = workspace_m.getattr("check_clean_tree")?;
         let local_tree: Py<PyAny> = local_tree.to_object(py).clone_ref(py);
         let basis_tree: Py<PyAny> = basis_tree.to_object(py).clone_ref(py);
-        // Breezy uses forward slashes internally, even on Windows
-        let subpath_str = subpath.to_string_lossy().replace('\\', "/");
-        check_clean_tree.call1((local_tree, basis_tree, subpath_str))?;
+        check_clean_tree.call1((local_tree, basis_tree, subpath.as_os_str()))?;
         Ok(())
     });
 
@@ -196,6 +194,49 @@ mod tests {
 
         let result = check_clean_tree(&wt, &basis_tree, subpath);
         assert!(result.is_ok());
+        std::mem::drop(env);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    #[cfg(unix)]
+    fn test_check_clean_tree_subpath_with_backslash() {
+        let env = crate::testing::TestEnv::new();
+        let wt = create_standalone_workingtree(&env.working_dir, "2a").unwrap();
+        // On Unix a backslash is an ordinary character in a file name.
+        std::fs::create_dir(env.working_dir.join("a\\b")).unwrap();
+        std::fs::write(env.working_dir.join("a\\b/unknown.txt"), "content").unwrap();
+
+        let basis_tree = wt.basis_tree().unwrap();
+        let result = check_clean_tree(&wt, &basis_tree, Path::new("a\\b"));
+        assert!(
+            matches!(result, Err(Error::WorkspaceDirty(_))),
+            "{:?}",
+            result
+        );
+        std::mem::drop(env);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    #[cfg(unix)]
+    fn test_check_clean_tree_subpath_not_utf8() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let env = crate::testing::TestEnv::new();
+        // Bazaar formats only store UTF-8 paths, git trees take any bytes.
+        let wt = create_standalone_workingtree(&env.working_dir, "git").unwrap();
+        let subpath = Path::new(std::ffi::OsStr::from_bytes(b"a\xff"));
+        std::fs::create_dir(env.working_dir.join(subpath)).unwrap();
+        std::fs::write(env.working_dir.join(subpath).join("unknown.txt"), "content").unwrap();
+
+        let basis_tree = wt.basis_tree().unwrap();
+        let result = check_clean_tree(&wt, &basis_tree, subpath);
+        assert!(
+            matches!(result, Err(Error::WorkspaceDirty(_))),
+            "{:?}",
+            result
+        );
         std::mem::drop(env);
     }
 

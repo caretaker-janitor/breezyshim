@@ -637,9 +637,9 @@ impl From<PyErr> for Error {
                 let path = tree
                     .call_method1(py, "abspath", (path,))
                     .unwrap()
-                    .extract::<String>(py)
+                    .extract::<std::path::PathBuf>(py)
                     .unwrap();
-                Error::WorkspaceDirty(std::path::PathBuf::from(path))
+                Error::WorkspaceDirty(path)
             } else if NoSuchFile::matches(&err, py) {
                 Error::NoSuchFile(std::path::PathBuf::from(
                     value.getattr("path").unwrap().extract::<String>().unwrap(),
