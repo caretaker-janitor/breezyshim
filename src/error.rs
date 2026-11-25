@@ -772,29 +772,29 @@ impl From<PyErr> for Error {
                     ),
                 )
             } else if BadHttpRequest::matches(&err, py) {
-                Error::BadHttpRequest(
-                    value
-                        .getattr("path")
-                        .unwrap()
-                        .extract::<String>()
-                        .unwrap()
-                        .parse()
-                        .unwrap(),
-                    value.getattr("reason").unwrap().extract().unwrap(),
-                )
+                let path = value.getattr("path").unwrap().extract::<String>().unwrap();
+                // The path is not always a URL
+                match path.parse() {
+                    Ok(url) => Error::BadHttpRequest(
+                        url,
+                        value.getattr("reason").unwrap().extract().unwrap(),
+                    ),
+                    Err(_) => Error::Other(err),
+                }
             } else if UnexpectedHttpStatus::matches(&err, py) {
-                let headers_obj = value.getattr("headers").unwrap();
-                Error::UnexpectedHttpStatus {
-                    url: value
-                        .getattr("path")
-                        .unwrap()
-                        .extract::<String>()
-                        .unwrap()
-                        .parse()
-                        .unwrap(),
-                    code: value.getattr("code").unwrap().extract().unwrap(),
-                    extra: value.getattr("extra").unwrap().extract().unwrap(),
-                    headers: extract_headers(&headers_obj),
+                let path = value.getattr("path").unwrap().extract::<String>().unwrap();
+                // Forge API calls raise this with a path that is not a URL
+                match path.parse() {
+                    Ok(url) => {
+                        let headers_obj = value.getattr("headers").unwrap();
+                        Error::UnexpectedHttpStatus {
+                            url,
+                            code: value.getattr("code").unwrap().extract().unwrap(),
+                            extra: value.getattr("extra").unwrap().extract().unwrap(),
+                            headers: extract_headers(&headers_obj),
+                        }
+                    }
+                    Err(_) => Error::Other(err),
                 }
             } else if TransportNotPossible::matches(&err, py) {
                 Error::TransportNotPossible(get_exception_msg(value))
@@ -1784,6 +1784,28 @@ fn test_timeout() {
     Python::attach(|py| {
         assert!(p.is_instance_of::<pyo3::exceptions::PyTimeoutError>(py));
     });
+}
+
+#[test]
+fn test_unexpected_http_status_relative_path() {
+    let err = UnexpectedHttpStatus::new_err(("user", 401));
+    match Error::from(err) {
+        Error::Other(e) => Python::attach(|py| {
+            assert!(UnexpectedHttpStatus::matches(&e, py), "{}", e);
+        }),
+        e => panic!("Expected Error::Other, got {:?}", e),
+    }
+}
+
+#[test]
+fn test_bad_http_request_relative_path() {
+    let err = BadHttpRequest::new_err(("user", "foo"));
+    match Error::from(err) {
+        Error::Other(e) => Python::attach(|py| {
+            assert!(BadHttpRequest::matches(&e, py), "{}", e);
+        }),
+        e => panic!("Expected Error::Other, got {:?}", e),
+    }
 }
 
 #[test]
